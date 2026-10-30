@@ -1,0 +1,46 @@
+
+import os
+import hashlib
+import pymysql
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class QwerysSql:
+    def __init__(self):
+        self.db = pymysql.connect(
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME"),
+            cursorclass=pymysql.cursors.DictCursor
+        )
+
+    def query(self, sql, params=()):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql, params)
+            return cursor.fetchall()
+
+    def show_products(self):
+        return self.query("SELECT * FROM products")
+
+    def check_login(self, login):
+        return next(iter(self.query("SELECT * FROM clients WHERE login=%s", (login,))), None)
+
+    def get_auth(self, login, password):
+        user = self.check_login(login)
+        return user if user and user["password"] == hashlib.sha256(password.encode()).hexdigest() else None
+
+    def register_user(self, name, surname, email, login, password):
+        password = hashlib.sha256(password.encode()).hexdigest()
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO clients (first_name, last_name, email, login, password) VALUES (%s,%s,%s,%s,%s)",
+                (name, surname, email, login, password)
+            )
+            user_id = cursor.lastrowid
+        self.db.commit()
+        return user_id
+
+    def get_user_info(self, user_id):
+        return next(iter(self.query("SELECT * FROM clients WHERE client_id=%s", (user_id,))), None)
