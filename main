@@ -1,46 +1,198 @@
+main.py
+import sys
+from PyQt6.QtWidgets import *
+from shop import MyWin
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = MyWin()
+    window.show()
+    sys.exit(app.exec())
 
-import os
-import hashlib
+qwer_sql.py
 import pymysql
+import os
 from dotenv import load_dotenv
-
+from pymysql.cursors import DictCursor
 load_dotenv()
-
 class QwerysSql:
     def __init__(self):
-        self.db = pymysql.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME"),
-            cursorclass=pymysql.cursors.DictCursor
+        self.conn = pymysql.connect(
+            host=os.getenv('DB_HOST'),
+            user=os.getenv('DB_USER'),
+            passwd=os.getenv('DB_PASSWORD'),
+            db=os.getenv('DB_NAME'),
+            cursorclass=DictCursor
         )
-
-    def query(self, sql, params=()):
-        with self.db.cursor() as cursor:
-            cursor.execute(sql, params)
-            return cursor.fetchall()
-
+        self.cursor = self.conn.cursor()
     def show_products(self):
-        return self.query("SELECT * FROM products")
-
-    def check_login(self, login):
-        return next(iter(self.query("SELECT * FROM clients WHERE login=%s", (login,))), None)
-
+        self.cursor.execute("SELECT * FROM products")
+        return self.cursor.fetchall()
     def get_auth(self, login, password):
-        user = self.check_login(login)
-        return user if user and user["password"] == hashlib.sha256(password.encode()).hexdigest() else None
-
+        sql = "SELECT * FROM clients WHERE login = %s AND password = %s"
+        self.cursor.execute(sql, (login, password))
+        return self.cursor.fetchone()
     def register_user(self, name, surname, email, login, password):
-        password = hashlib.sha256(password.encode()).hexdigest()
-        with self.db.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO clients (first_name, last_name, email, login, password) VALUES (%s,%s,%s,%s,%s)",
-                (name, surname, email, login, password)
-            )
-            user_id = cursor.lastrowid
-        self.db.commit()
-        return user_id
-
+        sql = """
+            INSERT INTO clients
+            (first_name, last_name, email, login, password)
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        self.cursor.execute(
+            sql, (name, surname, email, login, password))
+        self.conn.commit()
+        return self.cursor.lastrowid
     def get_user_info(self, user_id):
-        return next(iter(self.query("SELECT * FROM clients WHERE client_id=%s", (user_id,))), None)
+        sql = "SELECT * FROM clients WHERE client_id = %s"
+        self.cursor.execute(sql, (user_id,))
+        return self.cursor.fetchone()
+    def check_login(self, login):
+        sql = "SELECT * FROM clients WHERE login = %s"
+        self.cursor.execute(sql, (login,))
+        return self.cursor.fetchone()
+
+main_widget.py
+from PyQt6.QtWidgets import *
+class MainWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        main_sloy = QVBoxLayout(self)
+        sloy1 = QHBoxLayout()
+        main_sloy.addLayout(sloy1)
+        sloy1.addStretch()
+        self.entry_btn = QPushButton("Вход / Регистрация")
+        self.entry_btn.setFixedWidth(160)
+        sloy1.addWidget(self.entry_btn)
+        self.wid_catalog = QWidget()
+        sloy2 = QHBoxLayout(self.wid_catalog)
+        main_sloy.addWidget(self.wid_catalog)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        sloy2.addWidget(scroll_area)
+        scroll_widget = QWidget()
+        scroll_area.setWidget(scroll_widget)
+        self.sloy_products = QVBoxLayout(scroll_widget)
+        self.sloy_products.setSpacing(10)
+
+shop.py
+from PyQt6.QtWidgets import *
+from PyQt6 import QtGui
+from qwer_sql import QwerysSql
+from main_widget import MainWidget
+class MyWin(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Магазин сумок")
+        self.resize(700, 500)
+        self.db = QwerysSql()
+        self.user_id = 0
+        self.main_widget = MainWidget()
+        self.setCentralWidget(self.main_widget)
+        self.main_widget.entry_btn.clicked.connect(self.entry_win)
+        self.show_products()
+    def show_products(self):
+        products = self.db.show_products()
+        for i in products:
+            cart_widget = QWidget()
+            cart_layout = QHBoxLayout(cart_widget)
+            lb_img = QLabel()
+            lb_img.setFixedSize(120, 120)
+            pixmap = QtGui.QPixmap("image/" + i['photo'])
+            pixmap = pixmap.scaled(100, 100)
+            lb_img.setPixmap(pixmap)
+            lb_name = QLabel(i['product_name'])
+            cart_layout.addWidget(lb_img)
+            cart_layout.addWidget(lb_name)
+            cart_layout.addStretch()
+            self.main_widget.sloy_products.addWidget(cart_widget)
+        self.main_widget.sloy_products.addStretch()
+    def entry_win(self):
+        self.win = QDialog(self)
+        self.win.setWindowTitle("Авторизация")
+        sloy = QVBoxLayout(self.win)
+        self.login = QLineEdit()
+        self.login.setPlaceholderText("Логин")
+        self.password = QLineEdit()
+        self.password.setPlaceholderText("Пароль")
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        bt_login = QPushButton("Войти")
+        bt_register = QPushButton("Зарегистрироваться")
+        sloy.addWidget(self.login)
+        sloy.addWidget(self.password)
+        sloy.addWidget(bt_login)
+        sloy.addWidget(bt_register)
+        bt_login.clicked.connect(self.auth)
+        bt_register.clicked.connect(self.register_win)
+        self.win.exec()
+    def auth(self):
+        login = self.login.text().strip()
+        password = self.password.text()
+        if not login or not password:
+            QMessageBox.warning(
+                self, "Ошибка", "Заполните все поля")
+            return
+        user = self.db.get_auth(login, password)
+        if user:
+            self.user_id = user['client_id']
+            self.main_widget.entry_btn.setText("Личный кабинет")
+            self.main_widget.entry_btn.clicked.disconnect()
+            self.main_widget.entry_btn.clicked.connect(self.about_user)
+            self.win.accept()
+        else:
+            QMessageBox.warning(
+                self, "Ошибка", "Неверный логин или пароль")
+    def register_win(self):
+        self.win.hide()
+        self.reg_win = QDialog(self)
+        self.reg_win.setWindowTitle("Регистрация")
+        sloy = QFormLayout(self.reg_win)
+        self.reg_name = QLineEdit()
+        self.reg_surname = QLineEdit()
+        self.reg_email = QLineEdit()
+        self.reg_login = QLineEdit()
+        self.reg_password = QLineEdit()
+        self.reg_password.setEchoMode(
+            QLineEdit.EchoMode.Password)
+        sloy.addRow("Имя", self.reg_name)
+        sloy.addRow("Фамилия", self.reg_surname)
+        sloy.addRow("Почта", self.reg_email)
+        sloy.addRow("Логин", self.reg_login)
+        sloy.addRow("Пароль", self.reg_password)
+        bt_register = QPushButton("Зарегистрироваться")
+        sloy.addRow(bt_register)
+        bt_register.clicked.connect(self.register)
+        self.reg_win.exec()
+    def register(self):
+        name = self.reg_name.text().strip()
+        surname = self.reg_surname.text().strip()
+        email = self.reg_email.text().strip()
+        login = self.reg_login.text().strip()
+        password = self.reg_password.text()
+        if not name or not surname or not email or not login or not password:
+            QMessageBox.warning(
+                self, "Ошибка", "Заполните все поля")
+            return
+        if self.db.check_login(login):
+            QMessageBox.warning(
+                self, "Ошибка", "Такой логин уже существует")
+            return
+        self.user_id = self.db.register_user(
+            name, surname, email, login, password)
+        QMessageBox.information(
+            self, "Успешно", "Регистрация прошла успешно")
+        self.main_widget.entry_btn.setText("Личный кабинет")
+        self.main_widget.entry_btn.clicked.disconnect()
+        self.main_widget.entry_btn.clicked.connect(self.about_user)
+        self.reg_win.accept()
+        self.win.accept()
+    def about_user(self):
+        user = self.db.get_user_info(self.user_id)
+        self.about_win = QDialog(self)
+        self.about_win.setWindowTitle("Личный кабинет")
+        self.about_win.resize(300, 200)
+        sloy = QFormLayout(self.about_win)
+        sloy.addRow("Имя:", QLabel(user['first_name']))
+        sloy.addRow("Фамилия:", QLabel(user['last_name']))
+        sloy.addRow("Почта:", QLabel(user['email']))
+        sloy.addRow("Логин:", QLabel(user['login']))
+        self.about_win.exec()
+
